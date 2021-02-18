@@ -1,6 +1,7 @@
 package backoff
 
 import (
+	"math/rand"
 	"time"
 )
 
@@ -61,12 +62,23 @@ func (b *Backoff) NextBackOff() time.Duration {
 		}
 	}
 
+	// Apply randomization: pick a value in
+	//   [interval*(1-rf), interval*(1+rf)]
+	rf := b.RandomizationFactor
 	interval := b.currentInterval
+	var delta time.Duration
+	if rf > 0 {
+		minInterval := float64(interval) * (1 - rf)
+		maxInterval := float64(interval) * (1 + rf)
+		delta = time.Duration(minInterval + rand.Float64()*(maxInterval-minInterval+1)) //nolint:gosec
+	} else {
+		delta = interval
+	}
 
 	// Advance current interval for next call, capping at MaxInterval.
 	b.advanceInterval()
 
-	return interval
+	return delta
 }
 
 // advanceInterval multiplies currentInterval by Multiplier and caps at MaxInterval.
