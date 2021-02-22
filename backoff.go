@@ -22,6 +22,11 @@ type Backoff struct {
 	// RandomizationFactor adds ±jitter in the range [0, 1).
 	RandomizationFactor float64
 
+	// now returns the current time. Defaults to time.Now.
+	now func() time.Time
+	// rnd is the random source used for jitter. Defaults to a package-level rand.
+	rnd *rand.Rand
+
 	currentInterval time.Duration
 	startTime       time.Time
 }
@@ -48,7 +53,28 @@ func Default() *Backoff {
 // as the start of the retry window.
 func (b *Backoff) Reset() {
 	b.currentInterval = b.InitialInterval
-	b.startTime = time.Now()
+	if b.now != nil {
+		b.startTime = b.now()
+	} else {
+		b.startTime = time.Now()
+	}
+}
+
+// nextRandFloat64 returns a float in [0, 1) using the injected rnd or the
+// package-level default source.
+func (b *Backoff) nextRandFloat64() float64 {
+	if b.rnd != nil {
+		return b.rnd.Float64()
+	}
+	return rand.Float64() //nolint:gosec
+}
+
+// currentTime returns the current wall time.
+func (b *Backoff) currentTime() time.Time {
+	if b.now != nil {
+		return b.now()
+	}
+	return time.Now()
 }
 
 // NextBackOff returns the next interval to wait before retrying.
@@ -56,7 +82,7 @@ func (b *Backoff) Reset() {
 func (b *Backoff) NextBackOff() time.Duration {
 	// Check elapsed time.
 	if b.MaxElapsed > 0 {
-		elapsed := time.Since(b.startTime)
+		elapsed := b.currentTime().Sub(b.startTime)
 		if elapsed >= b.MaxElapsed {
 			return Stop
 		}
@@ -70,13 +96,18 @@ func (b *Backoff) NextBackOff() time.Duration {
 	if rf > 0 {
 		minInterval := float64(interval) * (1 - rf)
 		maxInterval := float64(interval) * (1 + rf)
-		delta = time.Duration(minInterval + rand.Float64()*(maxInterval-minInterval+1)) //nolint:gosec
+		delta = time.Duration(minInterval + b.nextRandFloat64()*(maxInterval-minInterval+1))
 	} else {
 		delta = interval
 	}
 
 	// Advance current interval for next call, capping at MaxInterval.
 	b.advanceInterval()
+
+	// Clamp delta to non-negative.
+	if delta < 0 {
+		delta = 0
+	}
 
 	return delta
 }
@@ -86,6 +117,7 @@ func (b *Backoff) advanceInterval() {
 	if b.Multiplier <= 0 {
 		return
 	}
+	// Use float64 arithmetic to avoid integer overflow on large intervals.
 	next := float64(b.currentInterval) * b.Multiplier
 	if b.MaxInterval > 0 && next > float64(b.MaxInterval) {
 		b.currentInterval = b.MaxInterval
