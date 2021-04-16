@@ -59,6 +59,143 @@ func TestRetrySuccessAfterNFailures(t *testing.T) {
 	}
 }
 
+// fastBackoffWithElapsed is like fastBackoff but with a step-advancing clock
+// so MaxElapsed triggers after a predictable number of NextBackOff calls.
+func fastBackoffWithElapsed(maxElapsed time.Duration, stepPerCall time.Duration) *Backoff {
+	start := time.Unix(1000, 0)
+	t := start
+	clkFn := func() time.Time {
+		now := t
+		t = t.Add(stepPerCall)
+		return now
+	}
+	b := &Backoff{
+		InitialInterval:     1 * time.Millisecond,
+		MaxInterval:         5 * time.Millisecond,
+		MaxElapsed:          maxElapsed,
+		Multiplier:          1.5,
+		RandomizationFactor: 0,
+		now:                 clkFn,
+	}
+	b.Reset()
+	return b
+}
+
+// myError is a package-level error type used for errors.As unwrapping tests.
+type myError struct{ msg string }
+
+func (e *myError) Error() string { return e.msg }
+
+func TestRetryPermanentError(t *testing.T) {
+	underlying := errors.New("bad request")
+	calls := 0
+
+	err := Retry(context.Background(), func() error {
+		calls++
+		return Permanent(underlying)
+	}, fastBackoff())
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, underlying) {
+		t.Errorf("expected underlying error %v, got %v", underlying, err)
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 call, got %d", calls)
+	}
+}
+
+func TestRetryPermanentErrorUnwrapsWithErrorsAs(t *testing.T) {
+	orig := &myError{msg: "fatal"}
+
+	err := Retry(context.Background(), func() error {
+		return Permanent(orig)
+	}, fastBackoff())
+
+	var target *myError
+	if !errors.As(err, &target) {
+		t.Fatalf("errors.As failed: err = %v (%T)", err, err)
+	}
+	if target.msg != "fatal" {
+		t.Errorf("unexpected message: %s", target.msg)
+	}
+}
+
+func TestRetryStopsOnMaxElapsed(t *testing.T) {
+	b := fastBackoffWithElapsed(500*time.Millisecond, 200*time.Millisecond)
+
+	sentinel := errors.New("always fails")
+	calls := 0
+
+	err := Retry(context.Background(), func() error {
+		calls++
+		return sentinel
+	}, b)
+
+	if err == nil {
+		t.Fatal("expected non-nil error, got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got %v", err)
+	}
+	if calls == 0 {
+		t.Error("expected at least 1 call")
+	}
+}
+
+func TestRetryReturnsLastErrorAtStop(t *testing.T) {
+	b := fastBackoffWithElapsed(100*time.Millisecond, 60*time.Millisecond)
+
+	attempt := 0
+	errs := []error{
+		errors.New("err0"),
+		errors.New("err1"),
+		errors.New("err2"),
+	}
+
+	err := Retry(context.Background(), func() error {
+		e := errs[attempt%len(errs)]
+		attempt++
+		return e
+	}, b)
+
+	if err == nil {
+		t.Fatal("expected error at Stop, got nil")
+	}
+	found := false
+	for _, candidate := range errs {
+		if err == candidate {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("unexpected error value: %v", err)
+	}
+}
+
+func TestIsPermanent(t *testing.T) {
+	base := errors.New("base")
+	wrapped := Permanent(base)
+
+	if !IsPermanent(wrapped) {
+		t.Error("IsPermanent(Permanent(err)) should be true")
+	}
+	if IsPermanent(base) {
+		t.Error("IsPermanent(plain err) should be false")
+	}
+	if IsPermanent(nil) {
+		t.Error("IsPermanent(nil) should be false")
+	}
+}
+
+func TestPermanentNilPassthrough(t *testing.T) {
+	if Permanent(nil) != nil {
+		t.Error("Permanent(nil) should return nil")
+	}
+}
+
 func TestRetryContextCancelledBeforeStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
