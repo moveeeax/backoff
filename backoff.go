@@ -96,7 +96,8 @@ func (b *Backoff) NextBackOff() time.Duration {
 	if rf > 0 {
 		minInterval := float64(interval) * (1 - rf)
 		maxInterval := float64(interval) * (1 + rf)
-		delta = time.Duration(minInterval + b.nextRandFloat64()*(maxInterval-minInterval+1))
+		// rand.Float64 returns [0, 1); multiply across the full range.
+		delta = time.Duration(minInterval + b.nextRandFloat64()*(maxInterval-minInterval))
 	} else {
 		delta = interval
 	}
@@ -104,7 +105,7 @@ func (b *Backoff) NextBackOff() time.Duration {
 	// Advance current interval for next call, capping at MaxInterval.
 	b.advanceInterval()
 
-	// Clamp delta to non-negative.
+	// Guard against negative delta when rf is close to 1 and interval is tiny.
 	if delta < 0 {
 		delta = 0
 	}
