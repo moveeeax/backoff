@@ -1,6 +1,7 @@
 package backoff
 
 import (
+	"math"
 	"math/rand"
 	"time"
 )
@@ -114,15 +115,20 @@ func (b *Backoff) NextBackOff() time.Duration {
 }
 
 // advanceInterval multiplies currentInterval by Multiplier and caps at MaxInterval.
+// It uses float64 arithmetic and guards against int64 overflow so that very
+// large intervals (or high multipliers) don't wrap to negative values.
 func (b *Backoff) advanceInterval() {
 	if b.Multiplier <= 0 {
 		return
 	}
-	// Use float64 arithmetic to avoid integer overflow on large intervals.
 	next := float64(b.currentInterval) * b.Multiplier
-	if b.MaxInterval > 0 && next > float64(b.MaxInterval) {
-		b.currentInterval = b.MaxInterval
-	} else {
-		b.currentInterval = time.Duration(next)
+	// Clamp to MaxInterval or to the int64 ceiling to prevent overflow.
+	cap := float64(b.MaxInterval)
+	if b.MaxInterval <= 0 {
+		cap = math.MaxInt64
 	}
+	if next > cap {
+		next = cap
+	}
+	b.currentInterval = time.Duration(next)
 }
