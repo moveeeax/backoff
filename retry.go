@@ -29,6 +29,10 @@ func IsPermanent(err error) bool {
 	return errors.As(err, &pe)
 }
 
+// Notify is called by RetryNotify after each failed op attempt with the error
+// and the delay before the next retry.
+type Notify func(err error, delay time.Duration)
+
 // Retry calls op repeatedly with exponential backoff until one of the
 // following conditions is met:
 //
@@ -37,6 +41,12 @@ func IsPermanent(err error) bool {
 //   - b.NextBackOff() returns Stop — Retry returns the last error from op.
 //   - ctx is cancelled or its deadline is exceeded — Retry returns ctx.Err().
 func Retry(ctx context.Context, op func() error, b *Backoff) error {
+	return RetryNotify(ctx, op, b, nil)
+}
+
+// RetryNotify is like Retry but calls notify after each failed attempt with
+// the error and the duration of the next delay. notify may be nil.
+func RetryNotify(ctx context.Context, op func() error, b *Backoff, notify Notify) error {
 	b.Reset()
 	var lastErr error
 	for {
@@ -59,6 +69,10 @@ func Retry(ctx context.Context, op func() error, b *Backoff) error {
 		delay := b.NextBackOff()
 		if delay == Stop {
 			return lastErr
+		}
+
+		if notify != nil {
+			notify(err, delay)
 		}
 
 		// Sleep for the delay, but honour context cancellation.
