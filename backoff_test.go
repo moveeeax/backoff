@@ -216,3 +216,24 @@ func TestNonNegativeJitter(t *testing.T) {
 		}
 	}
 }
+
+func TestIntervalGrowthNoOverflow(t *testing.T) {
+	// With no MaxInterval and a large multiplier, interval should not go negative.
+	epoch := time.Unix(0, 0)
+	b := &Backoff{
+		InitialInterval:     1 * time.Hour,
+		MaxInterval:         0, // no cap
+		MaxElapsed:          0,
+		Multiplier:          100.0,
+		RandomizationFactor: 0,
+		now:                 func() time.Time { return epoch },
+	}
+	b.Reset()
+
+	for i := 0; i < 10; i++ {
+		got := b.NextBackOff()
+		if got < 0 {
+			t.Fatalf("call %d: negative interval %v after large multiplier", i+1, got)
+		}
+	}
+}
