@@ -196,6 +196,46 @@ func TestPermanentNilPassthrough(t *testing.T) {
 	}
 }
 
+func TestRetryNotifyCalledOnEachError(t *testing.T) {
+	calls := 0
+	notified := 0
+	sentinel := errors.New("fail")
+
+	err := RetryNotify(context.Background(), func() error {
+		calls++
+		if calls < 3 {
+			return sentinel
+		}
+		return nil
+	}, fastBackoff(), func(e error, d time.Duration) {
+		notified++
+		if !errors.Is(e, sentinel) {
+			t.Errorf("notify got unexpected error: %v", e)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if notified != 2 {
+		t.Errorf("expected 2 notifications, got %d", notified)
+	}
+}
+
+func TestRetryNotifyNilIsOK(t *testing.T) {
+	calls := 0
+	err := RetryNotify(context.Background(), func() error {
+		calls++
+		if calls < 2 {
+			return errors.New("once")
+		}
+		return nil
+	}, fastBackoff(), nil)
+	if err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
 func TestRetryContextCancelledBeforeStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
