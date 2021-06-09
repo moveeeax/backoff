@@ -50,10 +50,17 @@ func Default() *Backoff {
 	return b
 }
 
+// defaultInitialInterval is used by Reset when InitialInterval is not set.
+const defaultInitialInterval = 500 * time.Millisecond
+
 // Reset restores the backoff to its initial state and records the current time
-// as the start of the retry window.
+// as the start of the retry window. If InitialInterval is zero, it defaults to
+// defaultInitialInterval to avoid a busy-loop.
 func (b *Backoff) Reset() {
 	b.currentInterval = b.InitialInterval
+	if b.currentInterval <= 0 {
+		b.currentInterval = defaultInitialInterval
+	}
 	if b.now != nil {
 		b.startTime = b.now()
 	} else {
