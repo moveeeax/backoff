@@ -237,3 +237,21 @@ func TestIntervalGrowthNoOverflow(t *testing.T) {
 		}
 	}
 }
+
+func TestZeroInitialIntervalDefaultsToSane(t *testing.T) {
+	// InitialInterval=0 should default to 500ms, not spin at 0.
+	epoch := time.Unix(0, 0)
+	b := &Backoff{
+		InitialInterval:     0,
+		MaxInterval:         10 * time.Second,
+		MaxElapsed:          0,
+		Multiplier:          1.5,
+		RandomizationFactor: 0,
+		now:                 func() time.Time { return epoch },
+	}
+	b.Reset()
+	got := b.NextBackOff()
+	if got <= 0 {
+		t.Errorf("expected positive interval with zero InitialInterval, got %v", got)
+	}
+}
