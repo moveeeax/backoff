@@ -104,11 +104,23 @@ exceeded (set `MaxElapsed = 0` for no limit).
 
 ```go
 func Retry(ctx context.Context, op func() error, b *Backoff) error
+func RetryNotify(ctx context.Context, op func() error, b *Backoff, notify Notify) error
+
+type Notify func(err error, delay time.Duration)
 ```
 
-Calls `op` repeatedly until it returns `nil`, the context is cancelled, or
-`b.NextBackOff()` returns `Stop`. Returns the last error from `op`, or
+`Retry` calls `op` repeatedly until it returns `nil`, the context is cancelled,
+or `b.NextBackOff()` returns `Stop`. Returns the last error from `op`, or
 `ctx.Err()` if the context ended the loop.
+
+`RetryNotify` behaves identically but calls `notify` after each failed attempt
+with the error and the upcoming delay. Useful for logging retry attempts:
+
+```go
+backoff.RetryNotify(ctx, op, b, func(err error, d time.Duration) {
+    log.Printf("retry in %v: %v", d, err)
+})
+```
 
 ### Permanent errors
 
