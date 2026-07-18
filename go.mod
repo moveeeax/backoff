@@ -1,3 +1,3 @@
-module github.com/moveeeax/backoff
+module github.com/cybercapybara/backoff
 
 go 1.16
