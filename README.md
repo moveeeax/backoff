@@ -13,7 +13,7 @@ their calling goroutine.
 ## Install
 
 ```
-go get github.com/cybercapybara/backoff
+go get github.com/moveeeax/backoff
 ```
 
 Requires Go 1.16 or later.
@@ -30,7 +30,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cybercapybara/backoff"
+	"github.com/moveeeax/backoff"
 )
 
 func fetchData(ctx context.Context, url string) error {
