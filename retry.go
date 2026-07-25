@@ -75,11 +75,17 @@ func RetryNotify(ctx context.Context, op func() error, b *Backoff, notify Notify
 			notify(err, delay)
 		}
 
-		// Sleep for the delay, but honour context cancellation.
+		// Sleep for the delay, but honour context cancellation. A timer is used
+		// rather than time.After so that a cancelled context releases the timer
+		// immediately instead of leaving it armed until it fires — with a long
+		// MaxInterval that keeps a runtime timer and the channel alive for the
+		// full delay after Retry has already returned.
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-time.After(delay):
+		case <-timer.C:
 		}
 	}
 }

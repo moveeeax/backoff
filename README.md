@@ -100,6 +100,25 @@ exceeded (set `MaxElapsed = 0` for no limit).
 
 **`Reset()`** — restores initial state and restarts the elapsed timer.
 
+Field semantics worth knowing:
+
+- The **zero value is usable**. A `Backoff` built as a struct literal
+  initialises itself on first `NextBackOff`, so calling `Reset` up front is
+  optional. `Retry` calls `Reset` for you.
+- `InitialInterval` ≤ 0 falls back to 500 ms, and is capped at `MaxInterval`
+  when one is set, so the *first* delay respects the cap too.
+- `Multiplier` ≤ 1 means a constant interval. Values below 1 would shrink the
+  delay towards zero — the opposite of backing off — so they are treated as 1.
+- `RandomizationFactor` is clamped to `[0, 1]`. Below 1 the returned delay is
+  always positive; at exactly 1 the jitter window starts at zero, so a zero
+  delay is possible.
+- The returned delay never overflows (it saturates at `math.MaxInt64`) and
+  never runs past the end of the `MaxElapsed` window, so `MaxElapsed` is a true
+  upper bound on the retry window rather than one a final long sleep can
+  overshoot.
+- A `Backoff` is stateful and **not safe for concurrent use**. Give each retry
+  loop its own.
+
 ### Retry
 
 ```go

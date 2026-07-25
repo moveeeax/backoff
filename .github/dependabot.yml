@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # The library itself has no module dependencies; this keeps the pinned CI
+  # action versions from silently rotting the way checkout@v2 did.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
