@@ -287,6 +287,62 @@ func TestRetryContextCancelledDuringSleep(t *testing.T) {
 	}
 }
 
+func TestRetryDoesNotBusySpin(t *testing.T) {
+	// A Multiplier below 1 used to shrink the interval towards zero, turning
+	// Retry into a hot loop that hammers the downstream service.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	b := &Backoff{
+		InitialInterval: 20 * time.Millisecond,
+		MaxInterval:     1 * time.Second,
+		Multiplier:      0.5,
+	}
+
+	calls := 0
+	err := Retry(ctx, func() error {
+		calls++
+		return errors.New("transient")
+	}, b)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+	// A 20ms floor over a 100ms window allows a handful of attempts; anything
+	// close to the bound means the delay collapsed to zero.
+	if calls > 50 {
+		t.Errorf("op called %d times in 100ms — the retry loop is busy-spinning", calls)
+	}
+}
+
+func TestRetryHonoursCancellationDuringLongSleep(t *testing.T) {
+	// Cancellation must interrupt the sleep rather than being noticed only
+	// after the full delay has elapsed.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b := &Backoff{
+		InitialInterval: 30 * time.Second,
+		MaxInterval:     1 * time.Minute,
+		Multiplier:      2,
+	}
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err := Retry(ctx, func() error { return errors.New("transient") }, b)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("Retry took %v to return after cancellation, want well under the 30s delay", elapsed)
+	}
+}
+
 func TestRetryContextDeadlineExceeded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
