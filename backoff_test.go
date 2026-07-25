@@ -1,6 +1,7 @@
 package backoff
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -235,6 +236,172 @@ func TestIntervalGrowthNoOverflow(t *testing.T) {
 		if got < 0 {
 			t.Fatalf("call %d: negative interval %v after large multiplier", i+1, got)
 		}
+	}
+}
+
+func TestZeroValueBackoffIsUsable(t *testing.T) {
+	// The zero value must behave as if Reset had just been called, rather than
+	// handing back a 0s delay forever and busy-looping the caller.
+	var b Backoff
+
+	for i := 0; i < 3; i++ {
+		got := b.NextBackOff()
+		if got != defaultInitialInterval {
+			t.Fatalf("call %d: got %v, want %v", i+1, got, defaultInitialInterval)
+		}
+	}
+}
+
+func TestStructLiteralWithoutResetIsUsable(t *testing.T) {
+	// Constructing a Backoff from a struct literal is the documented API; it
+	// must not require an explicit Reset before the first NextBackOff.
+	b := &Backoff{
+		InitialInterval: 100 * time.Millisecond,
+		MaxInterval:     10 * time.Second,
+		Multiplier:      2,
+	}
+
+	want := []time.Duration{
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+	}
+	for i, w := range want {
+		if got := b.NextBackOff(); got != w {
+			t.Errorf("call %d: got %v, want %v", i+1, got, w)
+		}
+	}
+}
+
+func TestMultiplierBelowOneDoesNotShrinkToZero(t *testing.T) {
+	// A Multiplier < 1 would otherwise halve the interval on every call until
+	// it collapsed to 0 and the retry loop spun.
+	epoch := time.Unix(0, 0)
+	b := newTestBackoff(1*time.Second, 1*time.Minute, 0, 0.5, 0, 0, func() time.Time { return epoch })
+
+	for i := 0; i < 100; i++ {
+		if got := b.NextBackOff(); got != time.Second {
+			t.Fatalf("call %d: got %v, want a constant 1s", i+1, got)
+		}
+	}
+}
+
+func TestIntervalSaturatesInsteadOfOverflowing(t *testing.T) {
+	// With no MaxInterval and a large multiplier the interval reaches the
+	// int64 ceiling within a handful of calls. Converting an out-of-range
+	// float64 to an integer is implementation-defined in Go (amd64 yields
+	// MinInt64), so without an explicit clamp the interval wraps negative and
+	// every subsequent delay collapses to 0 — a busy loop.
+	epoch := time.Unix(0, 0)
+
+	for _, rf := range []float64{0, 0.5} {
+		b := newTestBackoff(1*time.Hour, 0, 0, 100.0, rf, 1, func() time.Time { return epoch })
+
+		for i := 0; i < 200; i++ {
+			got := b.NextBackOff()
+			if got <= 0 {
+				t.Fatalf("rf=%v call %d: non-positive delay %v (currentInterval=%d)",
+					rf, i+1, got, int64(b.currentInterval))
+			}
+		}
+		if b.currentInterval != maxDuration {
+			t.Errorf("rf=%v: currentInterval = %d, want it saturated at %d",
+				rf, int64(b.currentInterval), int64(maxDuration))
+		}
+	}
+}
+
+func TestRandomizationFactorAboveOneIsClamped(t *testing.T) {
+	// rf > 1 makes the low end of the jitter window negative; those delays used
+	// to be clamped to 0 while the high end grew past interval*2.
+	epoch := time.Unix(0, 0)
+	interval := 1 * time.Second
+	b := newTestBackoff(interval, 1*time.Minute, 0, 1.0, 5.0, 3, func() time.Time { return epoch })
+
+	for i := 0; i < 500; i++ {
+		got := b.NextBackOff()
+		if got < 0 || got > 2*interval {
+			t.Fatalf("call %d: got %v, want within [0, %v]", i+1, got, 2*interval)
+		}
+	}
+}
+
+func TestJitterStaysPositiveBelowFullRandomization(t *testing.T) {
+	// For rf strictly below 1 the delay must never reach zero.
+	epoch := time.Unix(0, 0)
+	b := newTestBackoff(1*time.Second, 1*time.Minute, 0, 1.0, 0.99, 11, func() time.Time { return epoch })
+
+	for i := 0; i < 1000; i++ {
+		if got := b.NextBackOff(); got <= 0 {
+			t.Fatalf("call %d: got %v, want > 0", i+1, got)
+		}
+	}
+}
+
+func TestDelayNeverExceedsMaxElapsedWindow(t *testing.T) {
+	// MaxElapsed is a budget for the whole retry window. Handing back a delay
+	// longer than the time left in it makes the caller overshoot its deadline
+	// by up to a full MaxInterval.
+	start := time.Unix(0, 0)
+	cur := start
+	b := &Backoff{
+		InitialInterval: 25 * time.Second,
+		MaxInterval:     60 * time.Second,
+		MaxElapsed:      30 * time.Second,
+		Multiplier:      2,
+		now:             func() time.Time { return cur },
+	}
+	b.Reset()
+
+	var total time.Duration
+	for i := 0; i < 20; i++ {
+		d := b.NextBackOff()
+		if d == Stop {
+			break
+		}
+		if d < 0 {
+			t.Fatalf("call %d: negative delay %v", i+1, d)
+		}
+		total += d
+		cur = cur.Add(d) // simulate the caller actually sleeping
+	}
+
+	if total > b.MaxElapsed {
+		t.Errorf("total delay %v exceeds MaxElapsed %v", total, b.MaxElapsed)
+	}
+}
+
+func TestInitialIntervalCappedAtMaxInterval(t *testing.T) {
+	epoch := time.Unix(0, 0)
+	b := newTestBackoff(30*time.Second, 5*time.Second, 0, 2.0, 0, 0, func() time.Time { return epoch })
+
+	if got := b.NextBackOff(); got != 5*time.Second {
+		t.Errorf("first delay = %v, want it capped at MaxInterval 5s", got)
+	}
+}
+
+func TestDurationFromFloatSaturates(t *testing.T) {
+	cases := []struct {
+		name string
+		in   float64
+		want time.Duration
+	}{
+		{"nan", math.NaN(), 0},
+		{"negative", -1e9, 0},
+		{"zero", 0, 0},
+		{"in range", 1e9, time.Second},
+		{"max int64 rounds up out of range", float64(math.MaxInt64), maxDuration},
+		{"far above range", float64(math.MaxInt64) * 4, maxDuration},
+		{"positive infinity", math.Inf(1), maxDuration},
+		{"negative infinity", math.Inf(-1), 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := durationFromFloat(tc.in); got != tc.want {
+				t.Errorf("durationFromFloat(%v) = %d, want %d", tc.in, int64(got), int64(tc.want))
+			}
+		})
 	}
 }
 
