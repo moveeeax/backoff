@@ -371,6 +371,36 @@ func TestDelayNeverExceedsMaxElapsedWindow(t *testing.T) {
 	}
 }
 
+func TestJitterCanExceedMaxInterval(t *testing.T) {
+	// Documented behaviour: MaxInterval caps the base interval before jitter,
+	// not the returned delay itself. Once the base interval is pinned at the
+	// cap, jitter with a large RandomizationFactor can push individual delays
+	// above MaxInterval (up to MaxInterval*(1+rf)). This test pins that
+	// contract down so a future "fix" that silently re-caps post-jitter would
+	// be caught here as the behaviour change it is.
+	epoch := time.Unix(0, 0)
+	maxInterval := 1 * time.Second
+	rf := 0.5
+	// Multiplier large enough that the base interval reaches MaxInterval
+	// after a couple of calls and stays pinned there.
+	b := newTestBackoff(maxInterval, maxInterval, 0, 10.0, rf, 5, func() time.Time { return epoch })
+
+	exceededCap := false
+	upperBound := time.Duration(float64(maxInterval) * (1 + rf))
+	for i := 0; i < 500; i++ {
+		got := b.NextBackOff()
+		if got > upperBound {
+			t.Fatalf("call %d: delay %v exceeds documented upper bound %v", i+1, got, upperBound)
+		}
+		if got > maxInterval {
+			exceededCap = true
+		}
+	}
+	if !exceededCap {
+		t.Fatalf("expected at least one delay above MaxInterval %v across 500 samples with rf=%v; jitter no longer overshoots the cap as documented", maxInterval, rf)
+	}
+}
+
 func TestInitialIntervalCappedAtMaxInterval(t *testing.T) {
 	epoch := time.Unix(0, 0)
 	b := newTestBackoff(30*time.Second, 5*time.Second, 0, 2.0, 0, 0, func() time.Time { return epoch })
