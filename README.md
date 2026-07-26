@@ -93,10 +93,13 @@ type Backoff struct {
 | `Multiplier`         | 1.5     |
 | `RandomizationFactor`| 0.5     |
 
-**`NextBackOff() time.Duration`** — returns the next wait duration, applying
-jitter in `[interval*(1-rf), interval*(1+rf)]`, growing by `Multiplier` each
-call, capped at `MaxInterval`. Returns `backoff.Stop` once `MaxElapsed` is
-exceeded (set `MaxElapsed = 0` for no limit).
+**`NextBackOff() time.Duration`** — grows the base interval by `Multiplier`
+each call, capped at `MaxInterval`, then applies jitter on top of that capped
+value: the returned delay falls in `[interval*(1-rf), interval*(1+rf)]`. That
+means the delay itself is **not** capped at `MaxInterval` — with jitter it can
+run up to `MaxInterval*(1+RandomizationFactor)` (90s for the 60s/0.5 defaults).
+Returns `backoff.Stop` once `MaxElapsed` is exceeded (set `MaxElapsed = 0` for
+no limit).
 
 **`Reset()`** — restores initial state and restarts the elapsed timer.
 
@@ -111,7 +114,10 @@ Field semantics worth knowing:
   delay towards zero — the opposite of backing off — so they are treated as 1.
 - `RandomizationFactor` is clamped to `[0, 1]`. Below 1 the returned delay is
   always positive; at exactly 1 the jitter window starts at zero, so a zero
-  delay is possible.
+  delay is possible. Jitter is applied *after* the `MaxInterval` cap, so it
+  can also push the delay *above* `MaxInterval` — up to double it at
+  `RandomizationFactor = 1`. If you need a hard ceiling on the sleep itself,
+  budget for that.
 - The returned delay never overflows (it saturates at `math.MaxInt64`) and
   never runs past the end of the `MaxElapsed` window, so `MaxElapsed` is a true
   upper bound on the retry window rather than one a final long sleep can

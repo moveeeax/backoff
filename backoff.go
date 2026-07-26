@@ -23,7 +23,13 @@ const maxDuration time.Duration = math.MaxInt64
 type Backoff struct {
 	// InitialInterval is the first delay duration.
 	InitialInterval time.Duration
-	// MaxInterval caps the computed delay before jitter is applied.
+	// MaxInterval caps the base interval before jitter is applied. Jitter is
+	// then applied on top of that capped value, so the delay NextBackOff
+	// actually returns can exceed MaxInterval by up to a factor of
+	// (1 + RandomizationFactor) — e.g. with the default RandomizationFactor of
+	// 0.5, a 60s MaxInterval can produce delays up to 90s. If callers need a
+	// hard ceiling on the sleep duration itself (for a downstream timeout,
+	// say), account for that factor rather than assuming MaxInterval is it.
 	MaxInterval time.Duration
 	// MaxElapsed is the total time after which NextBackOff returns Stop.
 	// Zero means no limit. While it is in force, NextBackOff never returns a
