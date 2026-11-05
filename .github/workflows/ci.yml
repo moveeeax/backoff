@@ -16,17 +16,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 1.16 is the minimum version the README promises; 'stable' catches
-        # regressions against the current toolchain. ubuntu-latest is amd64,
+        # 1.26 is the minimum version go.mod and the README promise; 1.27 is
+        # the current stable release. ubuntu-latest is amd64,
         # where an out-of-range float64 -> int64 conversion yields MinInt64
         # rather than saturating, so this also exercises the overflow guards.
-        go: [ '1.16', 'stable' ]
+        go: [ '1.26', '1.27' ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
 
@@ -44,10 +44,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: stable
 

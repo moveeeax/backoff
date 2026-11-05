@@ -16,7 +16,7 @@ their calling goroutine.
 go get github.com/moveeeax/backoff
 ```
 
-Requires Go 1.16 or later.
+Requires Go 1.26 or later.
 
 ## Usage
 
